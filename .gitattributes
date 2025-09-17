@@ -1,0 +1,37 @@
+
+# Normalize line endings: default to text with LF in the repo
+* text=auto eol=lf
+
+# Explicitly enforce LF for common source/text files
+*.js   text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.jsx  text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.sh   text eol=lf
+*.ps1  text eol=lf
+
+# Mark binaries (no line ending conversions)
+*.exe  binary
+*.dll  binary
+*.ico  binary
+*.icns binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.zip  binary
+*.7z   binary
+*.pfx  binary
+*.p12  binary
+*.ico  binary
+*.icns binary
+
+# Keep these as-is (generated artifacts)
+dist/** binary

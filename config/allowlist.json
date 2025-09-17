@@ -1,0 +1,19 @@
+{
+  "allowedHosts": [
+    "hub.aishacrm.app",
+    "app.base44.com",
+    "base44.app",
+    "base44.onrender.com",
+    "cdn.tailwindcss.com",
+    "js.stripe.com",
+    "m.stripe.network",
+    "accounts.google.com",
+    "ssl.gstatic.com",
+    "lh3.googleusercontent.com",
+    "qtrypzzcjebvfcihiynt.supabase.co",
+    "api.elevenlabs.io",
+    "cdn.elevenlabs.io",
+    "realtime.elevenlabs.io",
+    "elevenlabs.io"
+  ]
+}

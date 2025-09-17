@@ -1,0 +1,52 @@
+{
+  "name": "aisha-hub-browser",
+  "version": "1.4.0",
+  "description": "Ai-SHA Hub Browser \u2013 Desktop access to Ai-SHA CRM (hub-only)",
+  "author": "Ai-SHA",
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "dist": "electron-builder -w",
+    "agent": "node ./src/agent/agent-server.js"
+  },
+  "build": {
+    "appId": "com.aisha.hubbrowser",
+    "productName": "Ai-SHA Hub Browser",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "config/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "AiSHA-Hub-Browser-${version}-${os}-${arch}-${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "your-github-user-or-org",
+        "repo": "aisha-hub-browser"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^38.1.1",
+    "electron-builder": "^24.13.3",
+    "electron-updater": "^6.3.9"
+  }
+}

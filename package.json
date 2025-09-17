@@ -39,7 +39,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "your-github-user-or-org",
+        "owner": "andreibyf",
         "repo": "aisha-hub-browser"
       }
     ]

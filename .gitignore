@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+pnpm-lock.yaml
+yarn.lock
+
+# build output
+dist/
+out/
+release/
+*.log
+
+# OS/editor junk
+.DS_Store
+Thumbs.db

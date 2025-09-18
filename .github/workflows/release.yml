@@ -29,6 +29,10 @@ jobs:
         with:
           node-version: '20'
 
+      - name: List files in workspace
+        shell: pwsh
+        run: Get-ChildItem -Recurse -File | Where-Object { $_.Name -eq "package-lock.json" }
+
       - name: Install dependencies
         run: npm ci
 

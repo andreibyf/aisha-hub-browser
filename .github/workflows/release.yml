@@ -9,7 +9,7 @@ on:
   workflow_dispatch:        # allows Actions → Run workflow (enter a tag)
     inputs:
       tag:
-        description: 'Tag to build/publish (e.g., v1.5.3)'
+        description: 'Tag to build/publish v1.5.3'
         required: false
 
 jobs:
@@ -74,19 +74,29 @@ jobs:
           fi
 
       # --- OPTIONAL (recommended) icon sanity check if you switched to PNG ---
-      # - name: Verify icon.png is ≥256×256
-      #   shell: pwsh
-      #   run: |
-      #     $p = "assets\icon.png"
-      #     if (!(Test-Path $p)) { Write-Error "assets/icon.png missing"; exit 1 }
-      #     Add-Type -AssemblyName System.Drawing
-      #     $img = [System.Drawing.Image]::FromFile($p)
-      #     Write-Host "icon.png size: $($img.Width)x$($img.Height)"
-      #     if ($img.Width -lt 256 -or $img.Height -lt 256) { Write-Error "assets/icon.png must be at least 256x256" }
+      - name: Verify icon.png is ≥256×256
+        shell: pwsh
+        run: |
+          $p = "assets\icon.png"
+          if (!(Test-Path $p)) { Write-Error "assets/icon.png missing"; exit 1 }
+          Add-Type -AssemblyName System.Drawing
+          $img = [System.Drawing.Image]::FromFile($p)
+          Write-Host "icon.png size: $($img.Width)x$($img.Height)"
+          if ($img.Width -lt 256 -or $img.Height -lt 256) { Write-Error "assets/icon.png must be at least 256x256" }
 
       # Build app but DO NOT auto-publish; we upload ourselves
       - name: Build Windows (installer + portable)
         run: npx electron-builder -w --publish never
+
+
+      - name: Show dist tree (debug)
+        shell: bash
+        run: |
+          echo "==== dist (top) ===="
+          ls -lah dist || true
+          echo "==== dist (recursive up to 3 levels) ===="
+          find dist -maxdepth 3 -type f -print || true
+
 
       # Show dist layout to debug paths
       - name: Show dist tree (debug)
@@ -98,12 +108,31 @@ jobs:
           find dist -maxdepth 3 -type f -print || true
 
       # Compute checksums RECURSIVELY (not only dist root)
+      #      - name: Compute SHA256 checksums
+      #        shell: pwsh
+      #        run: |
+      #          $dist = Resolve-Path dist
+      #          $files = Get-ChildItem $dist -Recurse -Include *.exe -File
+      #          if ($files.Count -eq 0) {
+      #            Write-Error "No .exe files found anywhere under dist/"
+      #          }
+      #          $out = ""
+      #          foreach ($f in $files) {
+      #            $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
+      #            $rel  = Resolve-Path -Relative $f.FullName
+      #            $out += "$rel  $hash`n"
+      #          }
+      #          $out | Out-File -FilePath "$dist\checksums.txt" -Encoding utf8
+      #          Get-Content "$dist\checksums.txt"
+
       - name: Compute SHA256 checksums
         shell: pwsh
         run: |
           $dist = Resolve-Path dist
           $files = Get-ChildItem $dist -Recurse -Include *.exe -File
           if ($files.Count -eq 0) {
+            Write-Host "No .exe files found. Available files under dist/:"
+            Get-ChildItem $dist -Recurse -File | ForEach-Object { Write-Host $_.FullName }
             Write-Error "No .exe files found anywhere under dist/"
           }
           $out = ""
@@ -114,6 +143,7 @@ jobs:
           }
           $out | Out-File -FilePath "$dist\checksums.txt" -Encoding utf8
           Get-Content "$dist\checksums.txt"
+
 
       # Fill template with $VERSION and checksums
       - name: Generate release notes from template

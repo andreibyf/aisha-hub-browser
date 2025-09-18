@@ -1,14 +1,52 @@
-# dependencies
+# Node.js
 node_modules/
-pnpm-lock.yaml
-yarn.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.pnpm-debug.log*
 
-# build output
+# Electron build outputs
 dist/
 out/
+build/
 release/
-*.log
 
-# OS/editor junk
+# OS generated files
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Icon?
+desktop.ini
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+*.gz
+
+# VSCode
+.vscode/
+.history/
+
+# Electron-builder cache
+*.yaml
+electron-builder.yml
+electron-builder-debug.yml
+app-builder-bin/
+app-builder.yml
+app-builder/
+
+# Misc
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+

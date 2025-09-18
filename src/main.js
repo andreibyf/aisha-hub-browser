@@ -24,6 +24,9 @@ function getAllowlist() {
   }
 }
 
+const GH_HOSTS = [ ".github.com", ".api.github.com", ".githubusercontent.com", ".github-releases.githubusercontent.com"        // objects.githubusercontent.com, raw…
+];
+
 function urlAllowed(url, allow) {
   try {
     const u = new URL(url);
@@ -31,7 +34,7 @@ function urlAllowed(url, allow) {
     if (!ok) return false;
     if (allow.has(u.hostname)) return true;
     // allowed suffixes for your stack (voice, google assets, supabase)
-    return [".elevenlabs.io", ".gstatic.com", ".googleusercontent.com", ".supabase.co"]
+    return [".elevenlabs.io", ".gstatic.com", ".googleusercontent.com", ".supabase.co", ...GH_HOSTS]
     .some(sfx => u.hostname.endsWith(sfx));
   } catch {
     return false;

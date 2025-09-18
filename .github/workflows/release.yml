@@ -9,7 +9,7 @@ on:
   workflow_dispatch:        # allows Actions → Run workflow (enter a tag)
     inputs:
       tag:
-        description: 'Tag to build/publish v1.5.3'
+        description: 'Tag to build/publish v1.5.4'
         required: false
 
 jobs:

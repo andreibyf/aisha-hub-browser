@@ -1,47 +1,40 @@
 {
   "name": "aisha-hub-browser",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Ai-SHA Hub Browser \u2013 Desktop access to Ai-SHA CRM (hub-only)",
   "author": "Ai-SHA",
   "main": "src/main.js",
   "scripts": {
     "dev": "electron .",
-    "dist": "electron-builder -w",
+    "dist": "electron-builder --win nsis portable --publish never",
     "agent": "node ./src/agent/agent-server.js"
   },
   "build": {
     "appId": "com.aisha.hubbrowser",
     "productName": "Ai-SHA Hub Browser",
     "asar": true,
-    "files": [
-      "src/**/*",
-      "config/**/*",
-      "assets/**/*",
-      "package.json"
-    ],
-    "directories": {
-      "output": "dist"
-    },
+    "files": ["src/**/*","config/**/*","assets/**/*","package.json"],
+    "directories": { "output": "dist" },
+
     "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "icon": "assets/icon.png",
-      "artifactName": "AiSHA-Hub-Browser-${version}-${os}-${arch}-${ext}"
+      "target": ["nsis","portable"],
+      "icon": "assets/icon.png"
     },
+
     "nsis": {
       "oneClick": true,
       "allowElevation": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "artifactName": "AiSHA-Hub-Browser-${version}-Setup.${ext}"
     },
+
+    "portable": {
+      "artifactName": "AiSHA-Hub-Browser-${version}-Portable.${ext}"
+    },
+
     "publish": [
-      {
-        "provider": "github",
-        "owner": "andreibyf",
-        "repo": "aisha-hub-browser"
-      }
+      { "provider": "github", "owner": "andreibyf", "repo": "aisha-hub-browser" }
     ]
   },
   "devDependencies": {

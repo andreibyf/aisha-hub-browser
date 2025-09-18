@@ -27,7 +27,7 @@
         "nsis",
         "portable"
       ],
-      "icon": "assets/icon_1024.png",
+      "icon": "assets/icon.png",
       "artifactName": "AiSHA-Hub-Browser-${version}-${os}-${arch}-${ext}"
     },
     "nsis": {

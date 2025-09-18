@@ -1,29 +1,21 @@
-
 name: Build & Release (Windows)
 
 on:
   push:
     tags:
-      - 'v*'            # trigger on tag push (v1.5.1, etc.)
+      - 'v*'              # run when you push a tag like v1.5.1
   release:
-    types: [published]  # ALSO trigger when you click “Publish release”
-  workflow_dispatch: {} # allow manual "Run workflow" from the Actions tab
-
-name: Build & Release (Windows)
-
-on:
-  push:
-    tags:
-      - 'v*'
+    types: [published]    # also run when you click "Publish release"
+  workflow_dispatch: {}   # allow manual runs from Actions tab
 
 jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write   # needed to create/update releases
+      contents: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}        # provided automatically
-      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}  # optional
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # provided automatically
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}  # optional (for signing)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Decode base64 PFX only if the secret is defined
+      # Decode base64 PFX only if the secret exists (signing optional)
       - name: Prepare code-signing cert (optional)
         shell: pwsh
         env:
@@ -47,7 +39,6 @@ jobs:
             $bytes = [Convert]::FromBase64String($env:CSC_LINK_B64)
             $pfxPath = "$env:RUNNER_TEMP\codesign.pfx"
             [IO.File]::WriteAllBytes($pfxPath, $bytes)
-            # Expose CSC_LINK for electron-builder
             "CSC_LINK=file:///$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           } else {
             Write-Host "No CSC_LINK_B64 provided; building unsigned artifacts."
@@ -61,9 +52,7 @@ jobs:
         run: |
           $dist = Resolve-Path dist
           $files = Get-ChildItem $dist -Filter *.exe -File
-          if ($files.Count -eq 0) {
-            Write-Error "No .exe files found in dist/"
-          }
+          if ($files.Count -eq 0) { Write-Error "No .exe files found in dist/" }
           $out = ""
           foreach ($f in $files) {
             $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
@@ -72,20 +61,21 @@ jobs:
           $out | Out-File -FilePath "$dist\checksums.txt" -Encoding utf8
           Get-Content "$dist\checksums.txt"
 
-           - name: Fill release notes from template with checksums
+      - name: Fill release notes from template with checksums
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
 
-            // Get version from package.json
+            // version from package.json
             const version = require(path.join(process.env.GITHUB_WORKSPACE, 'package.json')).version;
 
-            // Tag name for both triggers: push or release
+            // tag name for both triggers (push/release)
             const tag =
-              process.env.GITHUB_REF_NAME ||           // when triggered by push: tags/v1.5.1
-              (context.payload.release && context.payload.release.tag_name); // when triggered by release
+              (process.env.GITHUB_REF_NAME && process.env.GITHUB_REF_NAME.startsWith('v')
+                ? process.env.GITHUB_REF_NAME
+                : (context.payload.release && context.payload.release.tag_name));
 
             const templatePath = path.join(process.env.GITHUB_WORKSPACE, '.github', 'release_template.md');
             let body = fs.readFileSync(templatePath, 'utf8');
@@ -93,7 +83,7 @@ jobs:
             // Replace $VERSION placeholder
             body = body.replace(/\$VERSION/g, version);
 
-            // Read checksums (if present)
+            // Insert checksums
             const sumsPath = path.join(process.env.GITHUB_WORKSPACE, 'dist', 'checksums.txt');
             let sums = '(checksums unavailable)';
             try { sums = fs.readFileSync(sumsPath, 'utf8').trim(); } catch {}
@@ -113,4 +103,3 @@ jobs:
               release_id: release.id,
               body
             });
-

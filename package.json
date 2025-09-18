@@ -1,7 +1,7 @@
 {
   "name": "aisha-hub-browser",
-  "version": "1.5.5",
-  "description": "Ai-SHA Hub Browser \u2013 Desktop access to Ai-SHA CRM (hub-only)",
+  "version": "1.6.0",
+  "description": "Ai-SHA Hub Browser – Desktop access to Ai-SHA CRM (hub-only)",
   "author": "Ai-SHA",
   "main": "src/main.js",
   "scripts": {
@@ -13,11 +13,16 @@
     "appId": "com.aisha.hubbrowser",
     "productName": "Ai-SHA Hub Browser",
     "asar": true,
-    "files": ["src/**/*","config/**/*","assets/**/*","package.json"],
+    "files": [
+      "src/**/*",
+      "config/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
     "directories": { "output": "dist" },
 
     "win": {
-      "target": ["nsis","portable"],
+      "target": ["nsis", "portable"],
       "icon": "assets/icon.png"
     },
 
@@ -38,8 +43,8 @@
     ]
   },
   "dependencies": {
-    "electron-updater": "^6.3.9",
-    "electron": "^5.2.0"
+    "electron-log": "^5.2.0",
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
     "electron": "^38.1.1",

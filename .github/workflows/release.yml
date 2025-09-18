@@ -3,13 +3,13 @@ name: Build & Release (Windows)
 on:
   push:
     tags:
-      - 'v*'                # triggers when you push a tag like v1.5.3
+      - 'v*'
   release:
-    types: [published]      # ALSO triggers when you click “Publish release”
-  workflow_dispatch:        # allows Actions → Run workflow (enter a tag)
+    types: [published]
+  workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build/publish v1.5.4'
+        description: 'Tag to build/publish (e.g., v1.5.5)'
         required: false
 
 jobs:
@@ -18,8 +18,8 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}              # used by upload action
-      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}  # optional (code signing)
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,36 +29,30 @@ jobs:
         with:
           node-version: '20'
 
-      # Use lockfile if present, otherwise generate one then ci (reproducible)
-      - name: Install dependencies
+      - name: Install dependencies (lockfile-aware)
         shell: pwsh
         run: |
           if (Test-Path package-lock.json) {
-            Write-Host "package-lock.json found -> npm ci"
             npm ci
           } else {
-            Write-Host "No package-lock.json -> generating one, then npm ci"
             npm install --package-lock-only --no-audit --no-fund
             npm ci
           }
 
-      # Optional: decode base64 PFX cert for code signing (if you provided secrets)
       - name: Prepare code-signing cert (optional)
         shell: pwsh
         env:
           CSC_LINK_B64: ${{ secrets.CSC_LINK_B64 }}
         run: |
           if ($env:CSC_LINK_B64) {
-            Write-Host "Code signing: decoding PFX from CSC_LINK_B64"
             $bytes = [Convert]::FromBase64String($env:CSC_LINK_B64)
             $pfxPath = "$env:RUNNER_TEMP\codesign.pfx"
             [IO.File]::WriteAllBytes($pfxPath, $bytes)
             "CSC_LINK=file:///$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           } else {
-            Write-Host "No CSC_LINK_B64 provided; building unsigned artifacts."
+            Write-Host "No CSC_LINK_B64 provided; building unsigned."
           }
 
-      # Resolve which tag to publish under (works for push/release/manual)
       - name: Resolve tag name
         id: tag
         shell: bash
@@ -73,7 +67,6 @@ jobs:
             echo "No tag name found"; exit 1
           fi
 
-      # --- OPTIONAL (recommended) icon sanity check if you switched to PNG ---
       - name: Verify icon.png is ≥256×256
         shell: pwsh
         run: |
@@ -81,24 +74,12 @@ jobs:
           if (!(Test-Path $p)) { Write-Error "assets/icon.png missing"; exit 1 }
           Add-Type -AssemblyName System.Drawing
           $img = [System.Drawing.Image]::FromFile($p)
-          Write-Host "icon.png size: $($img.Width)x$($img.Height)"
           if ($img.Width -lt 256 -or $img.Height -lt 256) { Write-Error "assets/icon.png must be at least 256x256" }
+          Write-Host "icon.png OK: $($img.Width)x$($img.Height)"
 
-      # Build app but DO NOT auto-publish; we upload ourselves
       - name: Build Windows (installer + portable)
         run: npx electron-builder -w --publish never
 
-
-      - name: Show dist tree (debug)
-        shell: bash
-        run: |
-          echo "==== dist (top) ===="
-          ls -lah dist || true
-          echo "==== dist (recursive up to 3 levels) ===="
-          find dist -maxdepth 3 -type f -print || true
-
-
-      # Show dist layout to debug paths
       - name: Show dist tree (debug)
         shell: bash
         run: |
@@ -107,31 +88,13 @@ jobs:
           echo "==== dist (recursive) ===="
           find dist -maxdepth 3 -type f -print || true
 
-      # Compute checksums RECURSIVELY (not only dist root)
-      #      - name: Compute SHA256 checksums
-      #        shell: pwsh
-      #        run: |
-      #          $dist = Resolve-Path dist
-      #          $files = Get-ChildItem $dist -Recurse -Include *.exe -File
-      #          if ($files.Count -eq 0) {
-      #            Write-Error "No .exe files found anywhere under dist/"
-      #          }
-      #          $out = ""
-      #          foreach ($f in $files) {
-      #            $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
-      #            $rel  = Resolve-Path -Relative $f.FullName
-      #            $out += "$rel  $hash`n"
-      #          }
-      #          $out | Out-File -FilePath "$dist\checksums.txt" -Encoding utf8
-      #          Get-Content "$dist\checksums.txt"
-
       - name: Compute SHA256 checksums
         shell: pwsh
         run: |
           $dist = Resolve-Path dist
           $files = Get-ChildItem $dist -Recurse -Include *.exe -File
           if ($files.Count -eq 0) {
-            Write-Host "No .exe files found. Available files under dist/:"
+            Write-Host "No .exe files found. Here is dist content:"
             Get-ChildItem $dist -Recurse -File | ForEach-Object { Write-Host $_.FullName }
             Write-Error "No .exe files found anywhere under dist/"
           }
@@ -144,8 +107,6 @@ jobs:
           $out | Out-File -FilePath "$dist\checksums.txt" -Encoding utf8
           Get-Content "$dist\checksums.txt"
 
-
-      # Fill template with $VERSION and checksums
       - name: Generate release notes from template
         shell: pwsh
         run: |
@@ -157,7 +118,6 @@ jobs:
           $tmpl = $tmpl -replace '\(paste checksum here\)', $sums
           $tmpl | Out-File "dist\release_body.md" -Encoding utf8
 
-      # Upload assets (recursive globs) and set release body
       - name: Upload assets & set release notes
         uses: softprops/action-gh-release@v2
         with:

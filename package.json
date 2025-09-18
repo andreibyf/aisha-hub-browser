@@ -37,9 +37,11 @@
       { "provider": "github", "owner": "andreibyf", "repo": "aisha-hub-browser" }
     ]
   },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^38.1.1",
-    "electron-builder": "^24.13.3",
-    "electron-updater": "^6.3.9"
+    "electron-builder": "^24.13.3"
   }
 }

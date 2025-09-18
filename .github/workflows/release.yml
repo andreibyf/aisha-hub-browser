@@ -1,19 +1,25 @@
-
 name: Build & Release (Windows)
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*'               # run when a tag like v1.5.1 is pushed
+  release:
+    types: [published]     # ALSO run when you click “Publish release”
+  workflow_dispatch:        # manual runs from Actions tab
+    inputs:
+      tag:
+        description: 'Tag to build/publish (e.g., v1.5.1)'
+        required: false
 
 jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write   # needed to create/update releases
+      contents: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}        # provided automatically
-      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}  # optional
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}             # used by upload action
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }} # optional (code signing)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Decode base64 PFX only if the secret is defined
+      # If you provided CSC_LINK_B64 (base64 of a .pfx), decode and expose CSC_LINK
       - name: Prepare code-signing cert (optional)
         shell: pwsh
         env:
@@ -37,23 +43,35 @@ jobs:
             $bytes = [Convert]::FromBase64String($env:CSC_LINK_B64)
             $pfxPath = "$env:RUNNER_TEMP\codesign.pfx"
             [IO.File]::WriteAllBytes($pfxPath, $bytes)
-            # Expose CSC_LINK for electron-builder
             "CSC_LINK=file:///$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           } else {
             Write-Host "No CSC_LINK_B64 provided; building unsigned artifacts."
           }
 
-      - name: Build Windows and publish to GitHub Releases
-        run: npx electron-builder -w --publish always
+      - name: Resolve tag name
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${GITHUB_REF_NAME}" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "No tag name found"; exit 1
+          fi
 
-      - name: Compute SHA256 checksums of built EXEs
+      # Build but DO NOT auto-publish; we’ll upload ourselves
+      - name: Build Windows (installer + portable)
+        run: npx electron-builder -w --publish never
+
+      - name: Compute SHA256 checksums
         shell: pwsh
         run: |
           $dist = Resolve-Path dist
           $files = Get-ChildItem $dist -Filter *.exe -File
-          if ($files.Count -eq 0) {
-            Write-Error "No .exe files found in dist/"
-          }
+          if ($files.Count -eq 0) { Write-Error "No .exe files found in dist/" }
           $out = ""
           foreach ($f in $files) {
             $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
@@ -62,41 +80,26 @@ jobs:
           $out | Out-File -FilePath "$dist\checksums.txt" -Encoding utf8
           Get-Content "$dist\checksums.txt"
 
-      - name: Fill release notes from template with checksums
-        uses: actions/github-script@v7
+      - name: Generate release notes from template
+        shell: pwsh
+        run: |
+          $tmpl = Get-Content ".github/release_template.md" -Raw
+          $ver  = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tmpl = $tmpl -replace '\$VERSION', $ver
+          $sums = Get-Content "dist\checksums.txt" -Raw
+          if (-not $sums) { $sums = '(checksums unavailable)' }
+          $tmpl = $tmpl -replace '\(paste checksum here\)', $sums
+          $tmpl | Out-File "dist\release_body.md" -Encoding utf8
+
+      - name: Upload assets & set release notes
+        uses: softprops/action-gh-release@v2
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const core = require('@actions/core');
-            const version = require(path.join(process.env.GITHUB_WORKSPACE, 'package.json')).version;
-            const tag = process.env.GITHUB_REF_NAME; // e.g., v1.5.0
-            const templatePath = path.join(process.env.GITHUB_WORKSPACE, '.github', 'release_template.md');
-            let body = fs.readFileSync(templatePath, 'utf8');
-
-            // Replace $VERSION placeholder
-            body = body.replace(/\$VERSION/g, version);
-
-            // Read checksums (if present)
-            const sumsPath = path.join(process.env.GITHUB_WORKSPACE, 'dist', 'checksums.txt');
-            let sums = '(checksums unavailable)';
-            try {
-              sums = fs.readFileSync(sumsPath, 'utf8').trim();
-            } catch (e) {}
-
-            // Put checksums where template says (paste checksum here)
-            body = body.replace('(paste checksum here)', sums);
-
-            // Update the release body for this tag
-            const { data: release } = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: tag
-            });
-
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: release.id,
-              body: body
-            });
+          tag_name: ${{ steps.tag.outputs.tag }}
+          body_path: dist/release_body.md
+          files: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false

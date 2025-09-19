@@ -129,7 +129,7 @@ jobs:
             dist/*-Portable.exe
             dist/latest.yml
             dist/*.blockmap
-          replace_assets: true           # <— allows overwriting same-named assets
+          overwrite_files: true           # <— allows overwriting same-named assets
           fail_on_unmatched_files: false
           draft: false
           prerelease: false

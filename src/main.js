@@ -22,20 +22,37 @@ const GH_HOSTS = [
 ".githubusercontent.com",
 ".github-releases.githubusercontent.com",
 ];
+const SAFE_PROTOCOLS = new Set(['https:', 'wss:', 'devtools:']);
 
 function urlAllowed(url, allow) {
   try {
     const u = new URL(url);
-    const ok = u.protocol === "https:" || u.protocol === "wss:";
-    if (!ok) return false;
+
+    // Always allow DevTools
+    if (u.protocol === 'devtools:') return true;
+
+    // Enforce for network protocols
+    if (!SAFE_PROTOCOLS.has(u.protocol)) return false;
+
+    // Your existing allowlist logic
     if (allow.has(u.hostname)) return true;
-    // external suffixes you rely on (voice/Google assets/Supabase/updates)
-    return [".elevenlabs.io", ".gstatic.com", ".googleusercontent.com", ".supabase.co", ...GH_HOSTS]
-    .some(sfx => u.hostname.endsWith(sfx));
+
+    // allowed suffixes for your stack (voice, google assets, supabase, GH)
+    return [
+      '.elevenlabs.io',
+      '.gstatic.com',
+      '.googleusercontent.com',
+      '.supabase.co',
+      '.github.com',
+      '.api.github.com',
+      '.githubusercontent.com',
+      '.github-releases.githubusercontent.com', ...GH_HOSTS
+    ].some(sfx => u.hostname.endsWith(sfx));
   } catch {
     return false;
   }
 }
+
 
 // ---------- Auto-updater (only when packaged) ----------
 let autoUpdater = null;
@@ -334,7 +351,8 @@ function sameHost(url) {
 
 async function executeToolCalls(win, calls) {
   for (const c of calls) {
-    if (c.name === 'nav.goto') {
+    // NAVIGATE
+    if (c.name === 'nav_goto') {
       let target = c.args?.url || '/';
       if (target.startsWith('/')) target = `https://${HUB_HOST}${target}`;
         if (!sameHost(target)) throw new Error(`Blocked nav off-domain: ${target}`);
@@ -343,7 +361,8 @@ async function executeToolCalls(win, calls) {
         continue;
     }
 
-    if (c.name === 'dom.click') {
+    // CLICK
+    if (c.name === 'dom_click') {
       const sel = c.args?.selector;
       if (!sel) continue;
       const r = await execInPage(win, `
@@ -356,7 +375,8 @@ async function executeToolCalls(win, calls) {
       continue;
     }
 
-    if (c.name === 'dom.type') {
+    // TYPE
+    if (c.name === 'dom_type') {
       const sel = c.args?.selector, text = c.args?.text ?? '';
       if (!sel) continue;
       const r = await execInPage(win, `
@@ -374,8 +394,13 @@ async function executeToolCalls(win, calls) {
       await new Promise(r => setTimeout(r, 250));
       continue;
     }
+
+    // UNKNOWN
+    console.warn('Unknown tool call:', c);
   }
 }
+
+
 
 // ---------- Window ----------
 async function createWindow() {
@@ -389,6 +414,7 @@ async function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
+      devTools: true,
       partition: "persist:aisha-ssb-prod",
       preload: path.join(__dirname, "preload.js")
     }
@@ -486,14 +512,19 @@ async function createWindow() {
   });
 
   // Network allowlist
+  // onBeforeRequest: let DevTools pass
   ses.webRequest.onBeforeRequest((details, cb) => {
+    if (details.url.startsWith('devtools://')) {
+      return cb({ cancel: false });
+    }
     cb({ cancel: !urlAllowed(details.url, allow) });
   });
 
-  // Block unapproved new windows
-  win.webContents.setWindowOpenHandler(({ url }) =>
-  urlAllowed(url, allow) ? { action: "allow" } : { action: "deny" }
-  );
+  // setWindowOpenHandler: let DevTools pass
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('devtools://')) return { action: 'allow' };
+      return urlAllowed(url, allow) ? { action: 'allow' } : { action: 'deny' };
+  });
 
   await win.loadURL(`https://${HUB_HOST}/`);
 
@@ -588,11 +619,12 @@ async function createWindow() {
         { role: "reload" },
         { role: "forceReload" },
         { type: "separator" },
-        { role: "toggleDevTools", accelerator: "Ctrl+Shift+I" }
-      ]
-    },
-    { role: "quit" }
-  ];
+        {
+          label: "Toggle DevTools",
+          accelerator: "Ctrl+Shift+I",
+          click: () => win.webContents.openDevTools({ mode: 'detach' })
+        }
+      ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 
   // Updater

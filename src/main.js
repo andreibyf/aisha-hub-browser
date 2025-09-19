@@ -5,6 +5,131 @@ const fs = require('fs');
 
 const HUB_HOST = "hub.aishacrm.app";
 
+// --- AI helpers (HTTP + tool execution) ---
+const https = require('https');
+
+function postJSON(url, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    try {
+      const u = new URL(url);
+      const req = https.request({
+        method: 'POST',
+        hostname: u.hostname,
+        path: (u.pathname || '') + (u.search || ''),
+                                headers: { 'Content-Type': 'application/json', ...headers }
+      }, res => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode, json: JSON.parse(data || '{}') }); }
+          catch (e) { reject(e); }
+        });
+      });
+      req.on('error', reject);
+      req.write(JSON.stringify(body || {}));
+      req.end();
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+async function getAiToken() {
+  const url = `https://${HUB_HOST}/api/functions/aiToken`;
+  const { status, json } = await postJSON(url, {});
+  if (status === 200 && json?.ok && json?.token) return json.token;
+  throw new Error(`aiToken failed (${status}): ${json?.error || 'no token'}`);
+}
+
+async function getSnapshot(win) {
+  // Light snapshot for the planner
+  return await win.webContents.executeJavaScript(`(function(){
+    const interactive = Array.from(document.querySelectorAll('a,button,input,select,textarea,[role="button"]'))
+    .slice(0, 150)
+    .map(el => {
+      const t = (el.innerText || el.textContent || '').trim().slice(0,140);
+      let sel = '';
+      try {
+        // prefer stable-ish selectors
+        if (el.id) sel = '#' + CSS.escape(el.id);
+        else if (el.name) sel = '[name="' + el.name.replace(/"/g,'\\"') + '"]';
+        else if (el.getAttribute('data-testid')) sel = '[data-testid="' + el.getAttribute('data-testid') + '"]';
+        else sel = el.tagName.toLowerCase();
+      } catch {}
+      return { tag: el.tagName.toLowerCase(), selector: sel, text: t };
+    });
+    return {
+      url: location.href,
+      title: document.title,
+      text: document.body.innerText.slice(0, 18000),
+                                                   interactive_elements: interactive
+    };
+  })()`);
+}
+
+function parseToolCalls(aiJson) {
+  // Expecting shape: { ok: true, response: { tool_calls: [...] } }
+  const tc = aiJson?.response?.tool_calls || [];
+  // Each item: { type, function: { name, arguments: '<json string>' } }
+  return tc.map(t => {
+    const name = t?.function?.name;
+    let args = {};
+    try { args = JSON.parse(t?.function?.arguments || '{}'); } catch {}
+    return { name, args };
+  }).filter(x => !!x.name);
+}
+
+function sameHost(url) {
+  try { return new URL(url).hostname === HUB_HOST; } catch { return false; }
+}
+
+async function executeToolCalls(win, calls) {
+  for (const c of calls) {
+    if (c.name === 'nav.goto') {
+      let target = c.args?.url || '/';
+      // allow “/path” or full hub URL; block external
+      if (target.startsWith('/')) target = `https://${HUB_HOST}${target}`;
+        if (!sameHost(target)) throw new Error(`Blocked nav off-domain: ${target}`);
+        await win.loadURL(target);
+        // give the page a brief settle time
+        await new Promise(r => setTimeout(r, 400));
+    }
+
+    if (c.name === 'dom.click') {
+      const sel = c.args?.selector;
+      if (!sel) continue;
+      const ok = await win.webContents.executeJavaScript(`(function(){
+        const el = document.querySelector(${JSON.stringify(sel)});
+        if (!el) return false;
+        el.click();
+        return true;
+      })()`);
+      if (!ok) throw new Error(`Selector not found for click: ${sel}`);
+      await new Promise(r => setTimeout(r, 250));
+    }
+
+    if (c.name === 'dom.type') {
+      const sel = c.args?.selector, text = c.args?.text ?? '';
+      if (!sel) continue;
+      const ok = await win.webContents.executeJavaScript(`(function(){
+        const el = document.querySelector(${JSON.stringify(sel)});
+        if (!el) return false;
+        const setVal = (node, val) => {
+          node.focus();
+          node.value = val;
+          node.dispatchEvent(new Event('input', { bubbles:true }));
+          node.dispatchEvent(new Event('change', { bubbles:true }));
+        };
+        setVal(el, ${JSON.stringify(text)});
+        return true;
+      })()`);
+      if (!ok) throw new Error(`Selector not found for type: ${sel}`);
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+}
+
+
 // Load updater only when packaged; keep dev/portable from crashing
 let autoUpdater = null;
 try {
@@ -124,6 +249,55 @@ async function createWindow() {
             await ses.clearCache();
             win.loadURL(`https://${HUB_HOST}/`);
           }
+        }
+      ]
+    },
+    {
+      label: "AI",
+      submenu: [
+        {
+          label: "Run AI Command…",
+          click: async () => {
+            try {
+              // Get the current window
+              const focused = BrowserWindow.getFocusedWindow();
+              if (!focused) return;
+
+              // Quick prompt in the page (simplest no-UI approach)
+              const goal = await focused.webContents.executeJavaScript(
+                `window.prompt("What should I do? (e.g. 'Create a new lead for Acme')")`
+              );
+              if (!goal) return;
+
+              const token = await getAiToken();
+              const snapshot = await getSnapshot(focused);
+
+              const { status, json } = await postJSON(
+                `https://${HUB_HOST}/api/functions/aiRun`,
+                { goal, snapshot },
+                { Authorization: `Bearer ${token}` }
+              );
+
+              if (status !== 200 || !json?.ok) {
+                throw new Error(json?.error || `aiRun failed (${status})`);
+              }
+
+              const calls = parseToolCalls(json);
+              if (!calls.length) {
+                dialog.showMessageBox(focused, { type: 'info', message: 'No actions returned by AI.' });
+                return;
+              }
+
+              await executeToolCalls(focused, calls);
+            } catch (e) {
+              dialog.showErrorBox('AI Command failed', String(e?.message || e));
+            }
+          }
+        },
+        {
+          label: "Re-run Last Command",
+          enabled: false,  // (wire this later if you want history)
+          click: async () => {}
         }
       ]
     },

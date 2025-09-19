@@ -46,6 +46,7 @@ try {
 } catch (e) {
   console.warn('electron-updater not available:', e?.message || e);
 }
+
 function setupAutoUpdate(win) {
   if (!autoUpdater) return;
   let log = null;
@@ -314,7 +315,6 @@ async function promptInPage(win, {
   if (!ok) throw new Error(error || 'Prompt overlay failed');
   return result;           // string or null if cancelled
 }
-
 
 
 // ---------- Tool parsing + execution ----------

@@ -123,10 +123,13 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           body_path: dist/release_body.md
+          # Only the distributables we want to publish
           files: |
-            dist/**/*.exe
-            dist/**/latest.yml
-            dist/**/*.blockmap
+            dist/*-Setup.exe
+            dist/*-Portable.exe
+            dist/latest.yml
+            dist/*.blockmap
+          replace_assets: true           # <— allows overwriting same-named assets
           fail_on_unmatched_files: false
           draft: false
           prerelease: false

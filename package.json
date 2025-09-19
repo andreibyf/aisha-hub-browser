@@ -1,6 +1,6 @@
 {
   "name": "aisha-hub-browser",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Ai-SHA Hub Browser – Desktop access to Ai-SHA CRM (hub-only)",
   "author": "Ai-SHA",
   "main": "src/main.js",

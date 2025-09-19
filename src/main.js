@@ -1,13 +1,81 @@
-// src/main.js (hub-only, updater-safe, permissions, allowlist)
-const { app, BrowserWindow, Menu, session, shell, dialog } = require('electron');
+// src/main.js — hub-only, updater-safe, AI runner with safe renderer execution
+const { app, BrowserWindow, Menu, session, shell, dialog, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 
 const HUB_HOST = "hub.aishacrm.app";
 
-// --- AI helpers (HTTP + tool execution) ---
-const https = require('https');
+// ---------- Allowlist (site + assets + GitHub for updater) ----------
+function getAllowlist() {
+  try {
+    const p = path.join(__dirname, "..", "config", "allowlist.json");
+    return new Set(JSON.parse(fs.readFileSync(p, "utf8")).allowedHosts || []);
+  } catch {
+    return new Set([HUB_HOST]);
+  }
+}
 
+const GH_HOSTS = [
+  ".github.com",
+".api.github.com",
+".githubusercontent.com",
+".github-releases.githubusercontent.com",
+];
+
+function urlAllowed(url, allow) {
+  try {
+    const u = new URL(url);
+    const ok = u.protocol === "https:" || u.protocol === "wss:";
+    if (!ok) return false;
+    if (allow.has(u.hostname)) return true;
+    // external suffixes you rely on (voice/Google assets/Supabase/updates)
+    return [".elevenlabs.io", ".gstatic.com", ".googleusercontent.com", ".supabase.co", ...GH_HOSTS]
+    .some(sfx => u.hostname.endsWith(sfx));
+  } catch {
+    return false;
+  }
+}
+
+// ---------- Auto-updater (only when packaged) ----------
+let autoUpdater = null;
+try {
+  if (app.isPackaged) {
+    ({ autoUpdater } = require('electron-updater'));
+  }
+} catch (e) {
+  console.warn('electron-updater not available:', e?.message || e);
+}
+function setupAutoUpdate(win) {
+  if (!autoUpdater) return;
+  let log = null;
+  try { log = require('electron-log'); } catch {}
+  if (log) { log.transports.file.level = 'info'; autoUpdater.logger = log; }
+  autoUpdater.autoDownload = true;
+  autoUpdater.on('error', (err) => {
+    const msg = (err && err.stack) ? err.stack : String(err);
+    if (log) log.error('Updater error:', msg);
+    dialog.showErrorBox("Updater error", msg);
+    win?.webContents.send('updater', { event: 'error', msg });
+  });
+  autoUpdater.on('checking-for-update', () => win?.webContents.send('updater', { event: 'checking' }));
+  autoUpdater.on('update-available', (info) => win?.webContents.send('updater', { event: 'available', info }));
+  autoUpdater.on('update-not-available', () => win?.webContents.send('updater', { event: 'none' }));
+  autoUpdater.on('download-progress', (p) => win?.webContents.send('updater', { event: 'progress', p }));
+  autoUpdater.on('update-downloaded', (info) => {
+    dialog.showMessageBox(win, {
+      type: 'info',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+        message: 'Update ready',
+        detail: `Version ${info.version} has been downloaded.`
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    });
+  });
+}
+
+// ---------- Small HTTP helper for Base44 functions ----------
 function postJSON(url, body, headers = {}) {
   return new Promise((resolve, reject) => {
     try {
@@ -41,42 +109,57 @@ async function getAiToken() {
   throw new Error(`aiToken failed (${status}): ${json?.error || 'no token'}`);
 }
 
-async function getSnapshot(win) {
-  // Light snapshot for the planner
-  return await win.webContents.executeJavaScript(`(function(){
-    const interactive = Array.from(document.querySelectorAll('a,button,input,select,textarea,[role="button"]'))
-    .slice(0, 150)
-    .map(el => {
-      const t = (el.innerText || el.textContent || '').trim().slice(0,140);
-      let sel = '';
-      try {
-        // prefer stable-ish selectors
-        if (el.id) sel = '#' + CSS.escape(el.id);
-        else if (el.name) sel = '[name="' + el.name.replace(/"/g,'\\"') + '"]';
-        else if (el.getAttribute('data-testid')) sel = '[data-testid="' + el.getAttribute('data-testid') + '"]';
-        else sel = el.tagName.toLowerCase();
-      } catch {}
-      return { tag: el.tagName.toLowerCase(), selector: sel, text: t };
-    });
-    return {
-      url: location.href,
-      title: document.title,
-      text: document.body.innerText.slice(0, 18000),
-                                                   interactive_elements: interactive
-    };
-  })()`);
+// ---------- Safe renderer execution wrapper ----------
+async function execInPage(win, code) {
+  const wrapped = `
+  (async () => {
+    try {
+      const result = await (async () => { ${code} })();
+      return { ok: true, result };
+    } catch (e) {
+      return { ok: false, error: String(e && e.stack || e) };
+    }
+  })()
+  `;
+  return await win.webContents.executeJavaScript(wrapped);
 }
 
+// ---------- Snapshot (uses execInPage so errors bubble up) ----------
+async function getSnapshot(win) {
+  const r = await execInPage(win, `
+  const interactive = Array.from(document.querySelectorAll('a,button,input,select,textarea,[role="button"]'))
+  .slice(0, 150)
+  .map(el => {
+    const t = (el.innerText || el.textContent || '').trim().slice(0,140);
+    let sel = '';
+    try {
+      if (el.id) sel = '#' + CSS.escape(el.id);
+      else if (el.name) sel = '[name="' + String(el.name).replace(/"/g,'\\"') + '"]';
+      else if (el.getAttribute('data-testid')) sel = '[data-testid="' + el.getAttribute('data-testid') + '"]';
+      else sel = el.tagName.toLowerCase();
+    } catch {}
+    return { tag: el.tagName.toLowerCase(), selector: sel, text: t };
+  });
+  return {
+    url: location.href,
+    title: document.title,
+    text: document.body.innerText.slice(0, 18000),
+                             interactive_elements: interactive
+  };
+  `);
+  if (!r.ok) throw new Error("Snapshot failed in page: " + r.error);
+  return r.result;
+}
+
+// ---------- Tool parsing + execution ----------
 function parseToolCalls(aiJson) {
-  // Expecting shape: { ok: true, response: { tool_calls: [...] } }
   const tc = aiJson?.response?.tool_calls || [];
-  // Each item: { type, function: { name, arguments: '<json string>' } }
   return tc.map(t => {
     const name = t?.function?.name;
     let args = {};
     try { args = JSON.parse(t?.function?.arguments || '{}'); } catch {}
-    return { name, args };
-  }).filter(x => !!x.name);
+    return name ? { name, args } : null;
+  }).filter(Boolean);
 }
 
 function sameHost(url) {
@@ -87,122 +170,48 @@ async function executeToolCalls(win, calls) {
   for (const c of calls) {
     if (c.name === 'nav.goto') {
       let target = c.args?.url || '/';
-      // allow “/path” or full hub URL; block external
       if (target.startsWith('/')) target = `https://${HUB_HOST}${target}`;
         if (!sameHost(target)) throw new Error(`Blocked nav off-domain: ${target}`);
         await win.loadURL(target);
-        // give the page a brief settle time
         await new Promise(r => setTimeout(r, 400));
+        continue;
     }
 
     if (c.name === 'dom.click') {
       const sel = c.args?.selector;
       if (!sel) continue;
-      const ok = await win.webContents.executeJavaScript(`(function(){
-        const el = document.querySelector(${JSON.stringify(sel)});
-        if (!el) return false;
-        el.click();
-        return true;
-      })()`);
-      if (!ok) throw new Error(`Selector not found for click: ${sel}`);
+      const r = await execInPage(win, `
+      const el = document.querySelector(${JSON.stringify(sel)});
+      if (!el) throw new Error("Element not found: ${sel}");
+      el.click(); true;
+      `);
+      if (!r.ok) throw new Error(r.error);
       await new Promise(r => setTimeout(r, 250));
+      continue;
     }
 
     if (c.name === 'dom.type') {
       const sel = c.args?.selector, text = c.args?.text ?? '';
       if (!sel) continue;
-      const ok = await win.webContents.executeJavaScript(`(function(){
-        const el = document.querySelector(${JSON.stringify(sel)});
-        if (!el) return false;
-        const setVal = (node, val) => {
-          node.focus();
-          node.value = val;
-          node.dispatchEvent(new Event('input', { bubbles:true }));
-          node.dispatchEvent(new Event('change', { bubbles:true }));
-        };
-        setVal(el, ${JSON.stringify(text)});
-        return true;
-      })()`);
-      if (!ok) throw new Error(`Selector not found for type: ${sel}`);
+      const r = await execInPage(win, `
+      const el = document.querySelector(${JSON.stringify(sel)});
+      if (!el) throw new Error("Element not found: ${sel}");
+      const setVal = (node, val) => {
+        node.focus();
+        node.value = val;
+        node.dispatchEvent(new Event('input', { bubbles:true }));
+        node.dispatchEvent(new Event('change', { bubbles:true }));
+      };
+      setVal(el, ${JSON.stringify(text)}); true;
+      `);
+      if (!r.ok) throw new Error(r.error);
       await new Promise(r => setTimeout(r, 250));
+      continue;
     }
   }
 }
 
-
-// Load updater only when packaged; keep dev/portable from crashing
-let autoUpdater = null;
-try {
-  if (app.isPackaged) {
-    ({ autoUpdater } = require('electron-updater'));
-  }
-} catch (e) {
-  console.warn('electron-updater not available:', e?.message || e);
-}
-
-function getAllowlist() {
-  try {
-    const p = path.join(__dirname, "..", "config", "allowlist.json");
-    return new Set(JSON.parse(fs.readFileSync(p, "utf8")).allowedHosts || []);
-  } catch {
-    return new Set([HUB_HOST]);
-  }
-}
-
-const GH_HOSTS = [ ".github.com", ".api.github.com", ".githubusercontent.com", ".github-releases.githubusercontent.com"        // objects.githubusercontent.com, raw…
-];
-
-function urlAllowed(url, allow) {
-  try {
-    const u = new URL(url);
-    const ok = u.protocol === "https:" || u.protocol === "wss:";
-    if (!ok) return false;
-    if (allow.has(u.hostname)) return true;
-    // allowed suffixes for your stack (voice, google assets, supabase)
-    return [".elevenlabs.io", ".gstatic.com", ".googleusercontent.com", ".supabase.co", ...GH_HOSTS]
-    .some(sfx => u.hostname.endsWith(sfx));
-  } catch {
-    return false;
-  }
-}
-
-function setupAutoUpdate(win) {
-  if (!autoUpdater) return; // not available in dev/portable
-
-  // optional logging
-  let log = null;
-  try { log = require('electron-log'); } catch {}
-  if (log) {
-    log.transports.file.level = 'info';
-    autoUpdater.logger = log;
-  }
-
-  autoUpdater.autoDownload = true;
-
-  autoUpdater.on('error', (err) => {
-    const msg = (err && err.stack) ? err.stack : String(err);
-    if (log) log.error('Updater error:', msg);
-    dialog.showErrorBox("Updater error", msg);
-    win?.webContents.send('updater', { event: 'error', msg });
-  });
-
-  autoUpdater.on('checking-for-update', () => win?.webContents.send('updater', { event: 'checking' }));
-  autoUpdater.on('update-available', (info) => win?.webContents.send('updater', { event: 'available', info }));
-  autoUpdater.on('update-not-available', () => win?.webContents.send('updater', { event: 'none' }));
-  autoUpdater.on('download-progress', (p) => win?.webContents.send('updater', { event: 'progress', p }));
-  autoUpdater.on('update-downloaded', (info) => {
-    dialog.showMessageBox(win, {
-      type: 'info',
-      buttons: ['Restart now', 'Later'],
-      defaultId: 0,
-        message: 'Update ready',
-        detail: `Version ${info.version} has been downloaded.`
-    }).then(({ response }) => {
-      if (response === 0) autoUpdater.quitAndInstall();
-    });
-  });
-}
-
+// ---------- Window ----------
 async function createWindow() {
   const allow = getAllowlist();
 
@@ -223,7 +232,7 @@ async function createWindow() {
 
   // Mic/camera permission for ElevenLabs/voice widgets
   ses.setPermissionRequestHandler((wc, permission, cb) => {
-    cb(permission === "media"); // only allow mic/cam
+    cb(permission === "media");
   });
 
   // Network allowlist
@@ -238,6 +247,7 @@ async function createWindow() {
 
   await win.loadURL(`https://${HUB_HOST}/`);
 
+  // ----- Menus -----
   const template = [
     {
       label: "Auth",
@@ -259,14 +269,15 @@ async function createWindow() {
           label: "Run AI Command…",
           click: async () => {
             try {
-              // Get the current window
               const focused = BrowserWindow.getFocusedWindow();
               if (!focused) return;
 
-              // Quick prompt in the page (simplest no-UI approach)
-              const goal = await focused.webContents.executeJavaScript(
-                `window.prompt("What should I do? (e.g. 'Create a new lead for Acme')")`
-              );
+              // prompt for goal (safe)
+              const promptResp = await execInPage(focused, `
+              return window.prompt("What should I do? (e.g. 'Create a new lead for Acme')");
+              `);
+              if (!promptResp.ok) throw new Error("Prompt failed in page: " + promptResp.error);
+              const goal = promptResp.result;
               if (!goal) return;
 
               const token = await getAiToken();
@@ -277,7 +288,6 @@ async function createWindow() {
                 { goal, snapshot },
                 { Authorization: `Bearer ${token}` }
               );
-
               if (status !== 200 || !json?.ok) {
                 throw new Error(json?.error || `aiRun failed (${status})`);
               }
@@ -293,11 +303,6 @@ async function createWindow() {
               dialog.showErrorBox('AI Command failed', String(e?.message || e));
             }
           }
-        },
-        {
-          label: "Re-run Last Command",
-          enabled: false,  // (wire this later if you want history)
-          click: async () => {}
         }
       ]
     },
@@ -323,20 +328,38 @@ async function createWindow() {
         }
       ]
     },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { type: "separator" },
+        { role: "toggleDevTools", accelerator: "Ctrl+Shift+I" }
+      ]
+    },
     { role: "quit" }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 
-  // Auto-update only when available
+  // Updater
   setupAutoUpdate(win);
-  if (autoUpdater) {
-    autoUpdater.checkForUpdatesAndNotify();
-  }
+  if (autoUpdater) autoUpdater.checkForUpdatesAndNotify();
 
   return win;
 }
 
-app.whenReady().then(createWindow);
+// ---------- App lifecycle ----------
+app.whenReady().then(async () => {
+  const win = await createWindow();
+  // DevTools shortcuts anywhere
+  globalShortcut.register('F12', () => { win && win.webContents.toggleDevTools(); });
+  globalShortcut.register('Control+Shift+I', () => { win && win.webContents.toggleDevTools(); });
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+});
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });

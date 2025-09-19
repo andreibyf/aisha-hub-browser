@@ -151,6 +151,172 @@ async function getSnapshot(win) {
   return r.result;
 }
 
+// ---------- In-page prompt overlay ----------
+async function askInPage(win, {
+  title = "What should I do?",
+  placeholder = "e.g. Create a new lead for Acme",
+  okText = "Run",
+  cancelText = "Cancel"
+} = {}) {
+  const js = `
+  (function(){
+    return new Promise((resolve) => {
+      try {
+        // If an old overlay exists, remove it
+        const old = document.getElementById('__aisha_ai_overlay__');
+        if (old) old.remove();
+
+        const wrap = document.createElement('div');
+        wrap.id = '__aisha_ai_overlay__';
+        Object.assign(wrap.style, {
+          position:'fixed', inset:'0', background:'rgba(0,0,0,0.45)',
+                      display:'grid', placeItems:'center', zIndex: 2147483647
+        });
+
+        const panel = document.createElement('div');
+        Object.assign(panel.style, {
+          width:'min(520px, 90vw)', background:'#111827', color:'#e5e7eb',
+                      borderRadius:'12px', padding:'20px', fontFamily:'system-ui, ui-sans-serif, Segoe UI, Roboto, Helvetica, Arial',
+                      boxShadow:'0 10px 30px rgba(0,0,0,0.35)'
+        });
+
+        const h = document.createElement('div');
+        h.textContent = ${JSON.stringify(title)};
+        Object.assign(h.style, { fontSize:'18px', fontWeight:'600', marginBottom:'12px' });
+
+        const input = document.createElement('textarea');
+        input.rows = 3;
+        input.placeholder = ${JSON.stringify(placeholder)};
+        Object.assign(input.style, {
+          width:'100%', boxSizing:'border-box', padding:'10px 12px',
+          borderRadius:'8px', border:'1px solid #374151', background:'#0b1220',
+          color:'#e5e7eb', outline:'none', resize:'vertical'
+        });
+
+        const actions = document.createElement('div');
+        Object.assign(actions.style, { display:'flex', gap:'10px', marginTop:'14px', justifyContent:'flex-end' });
+
+        const cancel = document.createElement('button');
+        cancel.textContent = ${JSON.stringify(cancelText)};
+        Object.assign(cancel.style, {
+          padding:'8px 12px', borderRadius:'8px', border:'1px solid #374151',
+          background:'#111827', color:'#e5e7eb', cursor:'pointer'
+        });
+
+        const ok = document.createElement('button');
+        ok.textContent = ${JSON.stringify(okText)};
+        Object.assign(ok.style, {
+          padding:'8px 12px', borderRadius:'8px', border:'1px solid #2563eb',
+          background:'#2563eb', color:'white', cursor:'pointer'
+        });
+
+        cancel.onclick = () => { wrap.remove(); resolve(null); };
+        ok.onclick = () => { const v = input.value.trim(); wrap.remove(); resolve(v || null); };
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
+          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); ok.click(); }
+        });
+
+        actions.append(cancel, ok);
+        panel.append(h, input, actions);
+        wrap.append(panel);
+        document.body.append(wrap);
+        input.focus();
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  })()
+  `;
+  const val = await win.webContents.executeJavaScript(js, true);
+  return val; // string or null if cancelled
+}
+
+
+async function promptInPage(win, {
+  title = "AI Command",
+  placeholder = "e.g. Create a new lead for Acme",
+  okText = "Run",
+  cancelText = "Cancel"
+} = {}) {
+  const { ok, result, error } = await execInPage(win, `
+  (function(){
+    return new Promise((resolve) => {
+      try {
+        const old = document.getElementById('__aisha_ai_overlay__');
+        if (old) old.remove();
+
+        const wrap = document.createElement('div');
+        wrap.id = '__aisha_ai_overlay__';
+        Object.assign(wrap.style, {
+          position:'fixed', inset:'0', background:'rgba(0,0,0,0.45)',
+                      display:'grid', placeItems:'center', zIndex: 2147483647
+        });
+
+        const panel = document.createElement('div');
+        Object.assign(panel.style, {
+          width:'min(520px, 90vw)', background:'#111827', color:'#e5e7eb',
+                      borderRadius:'12px', padding:'20px',
+                      fontFamily:'system-ui, ui-sans-serif, Segoe UI, Roboto, Helvetica, Arial',
+                      boxShadow:'0 10px 30px rgba(0,0,0,0.35)'
+        });
+
+        const h = document.createElement('div');
+        h.textContent = ${JSON.stringify(title)};
+        Object.assign(h.style, { fontSize:'18px', fontWeight:'600', marginBottom:'12px' });
+
+        const input = document.createElement('textarea');
+        input.rows = 3;
+        input.placeholder = ${JSON.stringify(placeholder)};
+        Object.assign(input.style, {
+          width:'100%', boxSizing:'border-box', padding:'10px 12px',
+          borderRadius:'8px', border:'1px solid #374151', background:'#0b1220',
+          color:'#e5e7eb', outline:'none', resize:'vertical'
+        });
+
+        const actions = document.createElement('div');
+        Object.assign(actions.style, { display:'flex', gap:'10px', marginTop:'14px', justifyContent:'flex-end' });
+
+        const cancel = document.createElement('button');
+        cancel.textContent = ${JSON.stringify(cancelText)};
+        Object.assign(cancel.style, {
+          padding:'8px 12px', borderRadius:'8px', border:'1px solid #374151',
+          background:'#111827', color:'#e5e7eb', cursor:'pointer'
+        });
+
+        const ok = document.createElement('button');
+        ok.textContent = ${JSON.stringify(okText)};
+        Object.assign(ok.style, {
+          padding:'8px 12px', borderRadius:'8px', border:'1px solid #2563eb',
+          background:'#2563eb', color:'white', cursor:'pointer'
+        });
+
+        cancel.onclick = () => { wrap.remove(); resolve(null); };
+        ok.onclick = () => { const v = input.value.trim(); wrap.remove(); resolve(v || null); };
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
+          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); ok.click(); }
+        });
+
+        actions.append(cancel, ok);
+        panel.append(h, input, actions);
+        wrap.append(panel);
+        document.body.append(wrap);
+        input.focus();
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  })()
+  `);
+  if (!ok) throw new Error(error || 'Prompt overlay failed');
+  return result;           // string or null if cancelled
+}
+
+
+
 // ---------- Tool parsing + execution ----------
 function parseToolCalls(aiJson) {
   const tc = aiJson?.response?.tool_calls || [];
@@ -273,11 +439,15 @@ async function createWindow() {
               if (!focused) return;
 
               // prompt for goal (safe)
-              const promptResp = await execInPage(focused, `
-              return window.prompt("What should I do? (e.g. 'Create a new lead for Acme')");
-              `);
+              // const promptResp = await execInPage(focused, `
+              // return window.prompt("What should I do? (e.g. 'Create a new lead for Acme')");
+              // `);
               if (!promptResp.ok) throw new Error("Prompt failed in page: " + promptResp.error);
-              const goal = promptResp.result;
+              //const goal = promptResp.result;
+              const goal = await promptInPage(focused, {
+                title: "AI Command",
+                placeholder: "e.g. Create a new lead for Acme"
+              });
               if (!goal) return;
 
               const token = await getAiToken();

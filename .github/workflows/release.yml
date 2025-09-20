@@ -151,21 +151,53 @@ jobs:
             }
 
 
-      - name: Upload assets & set release notes
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          body_path: dist/release_body.md
-          # Only the deliverables we actually want on Releases:
-          files: |
-            dist/*-Setup.exe
-            dist/*-Portable.exe
-            dist/*.blockmap
-            dist/latest.yml
-          overwrite_files: true         # allow replacing latest.yml etc.
-          fail_on_unmatched_files: false
-          draft: false
-          prerelease: false
+    # --- DEBUG: show everything we built ---
+    - name: Show dist tree (final)
+      shell: bash
+      run: |
+        echo "==== dist (full list) ===="
+        find dist -type f -maxdepth 3 -print
+        echo "==== installers found ===="
+        find dist -type f -name "*Setup*.exe" -print || true
+        echo "==== portables found ===="
+        find dist -type f -name "*Portable*.exe" -print || true
+
+    # --- OPTIONAL: also ship a zipped installer in case GH/globs flake ---
+    - name: Zip NSIS installer (optional)
+      shell: pwsh
+      run: |
+        $setup = Get-ChildItem dist -Recurse -Include *Setup*.exe -File | Select-Object -First 1
+        if ($setup) {
+          $zip = Join-Path $setup.DirectoryName ($setup.BaseName + ".zip")
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($setup.DirectoryName, $zip + ".tmp")
+          # Keep only the installer inside the zip
+          # Rebuild zip containing only the EXE:
+          Remove-Item $zip -ErrorAction SilentlyContinue
+          $zipArchive = [System.IO.Compression.ZipFile]::Open($zip, 'Create')
+          [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive, $setup.FullName, $setup.Name) | Out-Null
+          $zipArchive.Dispose()
+          Write-Host "Zipped installer: $zip"
+        } else {
+          Write-Host "No Setup EXE to zip."
+        }
+
+    # --- Upload everything explicitly ---
+    - name: Upload assets & set release notes
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        body_path: dist/release_body.md
+        files: |
+          dist/*Setup*.exe
+          dist/*Portable*.exe
+          dist/**/*.blockmap
+          dist/**/latest.yml
+          dist/*Setup*.zip
+        overwrite_files: true
+        fail_on_unmatched_files: false
+        draft: false
+        prerelease: false
 
 
 

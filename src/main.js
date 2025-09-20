@@ -1,4 +1,4 @@
-// src/main.js
+// src/main.js – hub-only browser with updater, allowlist, DevTools, AI actions
 const { app, BrowserWindow, Menu, session, shell, dialog, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -6,15 +6,15 @@ const https = require('https');
 
 const HUB_HOST = 'hub.aishacrm.app';
 
-// ---- optional updater (only when packaged) ----
+// --- updater only when packaged ---
 let autoUpdater = null;
 try {
   if (app.isPackaged) ({ autoUpdater } = require('electron-updater'));
 } catch (e) {
-  console.warn('electron-updater unavailable:', e?.message || e);
+  console.warn('electron-updater not available:', e?.message || e);
 }
 
-// ---- allowlist helpers ----
+// ---------- Allowlist ----------
 function getAllowlist() {
   try {
     const p = path.join(__dirname, '..', 'config', 'allowlist.json');
@@ -31,11 +31,15 @@ const GH_HOSTS = [
 '.github-releases.githubusercontent.com',
 ];
 
+function isNetProtocol(u) {
+  return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'wss:';
+}
+
 function urlAllowed(url, allow) {
   try {
     const u = new URL(url);
-    const ok = u.protocol === 'https:' || u.protocol === 'wss:';
-    if (!ok) return false;
+    if (!isNetProtocol(u)) return true; // don’t block devtools:, file:, chrome-extension:, etc.
+    if (u.protocol !== 'https:' && u.protocol !== 'wss:') return false;
     if (allow.has(u.hostname)) return true;
     return [
       '.elevenlabs.io',
@@ -49,7 +53,7 @@ function urlAllowed(url, allow) {
   }
 }
 
-// ---- updater wiring ----
+// ---------- Updater wiring ----------
 function setupAutoUpdate(win) {
   if (!autoUpdater) return;
   let log = null;
@@ -59,13 +63,12 @@ function setupAutoUpdate(win) {
     autoUpdater.logger = log;
   }
   autoUpdater.autoDownload = true;
-
   autoUpdater.on('error', (err) => {
     const msg = (err && err.stack) ? err.stack : String(err);
-    log?.error?.('Updater error:', msg);
+    if (log) log.error('Updater error:', msg);
     dialog.showErrorBox('Updater error', msg);
+    win?.webContents.send('updater', { event: 'error', msg });
   });
-
   autoUpdater.on('update-downloaded', (info) => {
     dialog.showMessageBox(win, {
       type: 'info',
@@ -79,30 +82,24 @@ function setupAutoUpdate(win) {
   });
 }
 
-// ---- tiny HTTP helper ----
+// ---------- AI helpers (HTTP + snapshot + tool exec) ----------
 function postJSON(url, body, headers = {}) {
   return new Promise((resolve, reject) => {
     try {
       const u = new URL(url);
-      const req = https.request(
-        {
-          method: 'POST',
-          hostname: u.hostname,
-          path: (u.pathname || '') + (u.search || ''),
+      const req = https.request({
+        method: 'POST',
+        hostname: u.hostname,
+        path: (u.pathname || '') + (u.search || ''),
                                 headers: { 'Content-Type': 'application/json', ...headers },
-        },
-        (res) => {
-          let data = '';
-          res.on('data', c => (data += c));
-          res.on('end', () => {
-            try {
-              resolve({ status: res.statusCode, json: data ? JSON.parse(data) : {} });
-            } catch (e) {
-              reject(e);
-            }
-          });
-        }
-      );
+      }, res => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode, json: JSON.parse(data || '{}') }); }
+          catch (e) { reject(e); }
+        });
+      });
       req.on('error', reject);
       req.write(JSON.stringify(body || {}));
       req.end();
@@ -112,7 +109,6 @@ function postJSON(url, body, headers = {}) {
   });
 }
 
-// ---- AI helpers ----
 async function getAiToken() {
   const url = `https://${HUB_HOST}/api/functions/aiToken`;
   const { status, json } = await postJSON(url, {});
@@ -120,38 +116,45 @@ async function getAiToken() {
   throw new Error(`aiToken failed (${status}): ${json?.error || 'no token'}`);
 }
 
-async function getSnapshot(win) {
-  return await win.webContents.executeJavaScript(`(function(){
-    const interactive = Array.from(document.querySelectorAll('a,button,input,select,textarea,[role="button"]'))
-    .slice(0, 150)
-    .map(el => {
-      const t = (el.innerText || el.textContent || '').trim().slice(0,140);
-      let sel = '';
-      try {
-        if (el.id) sel = '#' + CSS.escape(el.id);
-        else if (el.name) sel = '[name="' + el.name.replace(/"/g,'\\"') + '"]';
-        else if (el.getAttribute('data-testid')) sel = '[data-testid="' + el.getAttribute('data-testid') + '"]';
-        else sel = el.tagName.toLowerCase();
-      } catch {}
-      return { tag: el.tagName.toLowerCase(), selector: sel, text: t };
-    });
-    return {
-      url: location.href,
-      title: document.title,
-      text: document.body.innerText.slice(0, 18000),
-                                                   interactive_elements: interactive
-    };
-  })()`);
-}
-
 async function execInPage(win, code) {
   const wrapped = `
   (async () => {
-    try { const result = await (async () => { ${code} })(); return { ok: true, result }; }
-    catch (e) { return { ok: false, error: String(e && e.stack || e) }; }
+    try {
+      const result = await (async () => { ${code} })();
+      return { ok: true, result };
+    } catch (e) {
+      return { ok: false, error: String(e && e.stack || e) };
+    }
   })()
   `;
   return await win.webContents.executeJavaScript(wrapped);
+}
+
+async function getSnapshot(win) {
+  const js = `
+  const interactive = Array.from(document.querySelectorAll(
+    'a,button,input,select,textarea,[role="button"]'
+  )).slice(0, 150).map(el => {
+    const t = (el.innerText || el.textContent || '').trim().slice(0,140);
+    let sel = '';
+    try {
+      if (el.id) sel = '#' + CSS.escape(el.id);
+      else if (el.name) sel = '[name="' + el.name.replace(/"/g, '\\"') + '"]';
+      else if (el.getAttribute('data-testid')) sel = '[data-testid="' + el.getAttribute('data-testid') + '"]';
+      else sel = el.tagName.toLowerCase();
+    } catch {}
+    return { tag: el.tagName.toLowerCase(), selector: sel, text: t };
+  });
+  return {
+    url: location.href,
+    title: document.title,
+    text: document.body.innerText.slice(0, 18000),
+    interactive_elements: interactive
+  };
+  `;
+  const res = await execInPage(win, js);
+  if (!res.ok) throw new Error(res.error);
+  return res.result;
 }
 
 function parseToolCalls(aiJson) {
@@ -161,12 +164,10 @@ function parseToolCalls(aiJson) {
     let args = {};
     try { args = JSON.parse(t?.function?.arguments || '{}'); } catch {}
     return { name, args };
-  }).filter(Boolean);
+  }).filter(x => !!x.name);
 }
 
-function sameHost(url) {
-  try { return new URL(url).hostname === HUB_HOST; } catch { return false; }
-}
+function sameHost(url) { try { return new URL(url).hostname === HUB_HOST; } catch { return false; } }
 
 async function executeToolCalls(win, calls) {
   for (const c of calls) {
@@ -178,7 +179,6 @@ async function executeToolCalls(win, calls) {
         await new Promise(r => setTimeout(r, 400));
         continue;
     }
-
     if (c.name === 'dom_click') {
       const sel = c.args?.selector;
       if (!sel) continue;
@@ -191,7 +191,6 @@ async function executeToolCalls(win, calls) {
       await new Promise(r => setTimeout(r, 250));
       continue;
     }
-
     if (c.name === 'dom_type') {
       const sel = c.args?.selector, text = c.args?.text ?? '';
       if (!sel) continue;
@@ -213,7 +212,7 @@ async function executeToolCalls(win, calls) {
   }
 }
 
-// ---- window creation ----
+// ---------- Window ----------
 async function createWindow() {
   const allow = getAllowlist();
 
@@ -227,25 +226,32 @@ async function createWindow() {
       webSecurity: true,
       partition: 'persist:aisha-ssb-prod',
       preload: path.join(__dirname, 'preload.js'),
-    },
+    }
   });
 
   const ses = session.fromPartition('persist:aisha-ssb-prod');
 
-  // mic/camera for ElevenLabs
+  // Mic/camera (ElevenLabs)
   ses.setPermissionRequestHandler((wc, permission, cb) => cb(permission === 'media'));
 
-  // allowlist
-  ses.webRequest.onBeforeRequest((details, cb) => cb({ cancel: !urlAllowed(details.url, allow) }));
+  // Allowlist: only filter http/https/wss; allow devtools://, file://, etc.
+  ses.webRequest.onBeforeRequest((details, cb) => {
+    try {
+      const u = new URL(details.url);
+      if (!isNetProtocol(u)) return cb({ cancel: false });
+      cb({ cancel: !urlAllowed(details.url, allow) });
+    } catch {
+      cb({ cancel: false });
+    }
+  });
 
-  // block new windows off-domain
-  win.webContents.setWindowOpenHandler(({ url }) => (
-    urlAllowed(url, allow) ? { action: 'allow' } : { action: 'deny' }
-  ));
+  win.webContents.setWindowOpenHandler(({ url }) =>
+  urlAllowed(url, allow) ? { action: 'allow' } : { action: 'deny' }
+  );
 
   await win.loadURL(`https://${HUB_HOST}/`);
 
-  // menu
+  // ----- Menu -----
   const template = [
     {
       label: 'Auth',
@@ -256,9 +262,9 @@ async function createWindow() {
             await ses.clearStorageData();
             await ses.clearCache();
             win.loadURL(`https://${HUB_HOST}/`);
-          },
-        },
-      ],
+          }
+        }
+      ]
     },
     {
       label: 'AI',
@@ -268,13 +274,28 @@ async function createWindow() {
           click: async () => {
             try {
               const focused = BrowserWindow.getFocusedWindow() || win;
-              // Use a page-side prompt (safer in some CSPs)
-              const resp = await execInPage(focused, `
-              const x = window.prompt("What should I do? (e.g. 'Create a new lead for Acme')");
-              x;
+              // prompt shim: many SPAs disable window.prompt
+              const pr = await execInPage(focused, `
+              let msg = "What should I do? (e.g. \\'Create a new lead for Acme\\')";
+              let val = (window.prompt && typeof window.prompt === 'function')
+              ? window.prompt(msg)
+              : await (async () => {
+                const d = document.createElement('div');
+                d.innerHTML = '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0006;z-index:9999999;"><div style="background:#111;color:#fff;padding:16px;border-radius:8px;min-width:360px;font-family:sans-serif;"><div style="margin-bottom:8px">AI Command</div><input id="__aisha_cmd" style="width:100%;padding:8px;background:#222;color:#fff;border:1px solid #333;border-radius:6px" placeholder="Create a new lead for Acme" /><div style="margin-top:10px;text-align:right"><button id="__aisha_ok">OK</button> <button id="__aisha_cancel">Cancel</button></div></div></div>';
+                document.body.appendChild(d);
+                return new Promise(res => {
+                  const ok = d.querySelector('#__aisha_ok');
+                  const inp = d.querySelector('#__aisha_cmd');
+                  const cancel = d.querySelector('#__aisha_cancel');
+                  ok.onclick = () => { const v = inp.value; d.remove(); res(v||''); };
+                  cancel.onclick = () => { d.remove(); res(''); };
+                  setTimeout(()=>inp.focus(),0);
+                });
+              })();
+              return val || '';
               `);
-              if (!resp.ok) throw new Error('Prompt failed: ' + resp.error);
-              const goal = resp.result;
+              if (!pr.ok) throw new Error('Prompt failed: ' + pr.error);
+              const goal = (pr.result || '').trim();
               if (!goal) return;
 
               const token = await getAiToken();
@@ -283,7 +304,7 @@ async function createWindow() {
               const { status, json } = await postJSON(
                 `https://${HUB_HOST}/api/functions/aiRun`,
                 { goal, snapshot },
-                { Authorization: 'Bearer ' + token }
+                { Authorization: `Bearer ${token}` }
               );
 
               if (status !== 200 || !json?.ok) {
@@ -300,9 +321,9 @@ async function createWindow() {
             } catch (e) {
               dialog.showErrorBox('AI Command failed', String(e?.message || e));
             }
-          },
-        },
-      ],
+          }
+        }
+      ]
     },
     {
       label: 'View',
@@ -311,7 +332,7 @@ async function createWindow() {
         { role: 'forceReload' },
         { type: 'separator' },
         { role: 'toggleDevTools', accelerator: 'Ctrl+Shift+I' },
-      ],
+      ]
     },
     {
       label: 'Help',
@@ -322,28 +343,29 @@ async function createWindow() {
             if (autoUpdater) autoUpdater.checkForUpdates();
             else dialog.showMessageBox(win, {
               type: 'info',
-              message: 'Auto-update is available in the installed (Setup) build.',
+              message: 'Auto-update is available in the installed (Setup) build.'
             });
-          },
+          }
         },
-        { label: 'Open Logs Folder', click: () => shell.openPath(app.getPath('userData')) },
-      ],
+        { label: 'Open Logs Folder', click: () => shell.openPath(app.getPath('userData')) }
+      ]
     },
-    { role: 'quit' },
+    { role: 'quit' }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 
+  // updater
   setupAutoUpdate(win);
   if (autoUpdater) autoUpdater.checkForUpdatesAndNotify();
 
   return win;
 }
 
-// ---- lifecycle ----
+// ---------- App lifecycle ----------
 app.whenReady().then(async () => {
   const win = await createWindow();
-  globalShortcut.register('F12', () => win?.webContents.toggleDevTools());
-  globalShortcut.register('Control+Shift+I', () => win?.webContents.toggleDevTools());
+  globalShortcut.register('F12', () => { if (win) win.webContents.toggleDevTools(); });
+  globalShortcut.register('Control+Shift+I', () => { if (win) win.webContents.toggleDevTools(); });
 });
 
 app.on('will-quit', () => globalShortcut.unregisterAll());

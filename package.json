@@ -1,63 +1,59 @@
 {
-  "name": "aisha-hub-browser",
-  "version": "2.1.7",
-  "description": "Ai-SHA Hub Browser – Desktop access to Ai-SHA CRM (hub-only)",
-  "author": "Ai-SHA",
-  "main": "src/main.js",
+  "name": "ai-sha-hub-browser",
+  "version": "3.0.0",
+  "description": "Dedicated desktop browser for hub.aishacrm.app with optional AG-UI agent control.",
+  "license": "MIT",
+  "author": "Andrei Byfield",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andreibyf/aisha-hub-browser"
+  },
+  "main": "dist/main.js",
   "scripts": {
-    "dev": "electron .",
-    "dist": "electron-builder --win nsis portable --publish never",
-    "agent": "node ./src/agent/agent-server.js"
+    "clean": "rimraf dist",
+    "build": "tsc",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder -w",
+    "release": "npm run build && electron-builder -w --publish always"
+  },
+  "dependencies": {
+    "electron-log": "^5.1.4",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "@types/electron": "^1.6.0",
+    "@types/node": "^22.7.3",
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.6.3"
   },
   "build": {
-    "appId": "com.aisha.hubbrowser",
+    "appId": "app.aishacrm.hubbrowser",
     "productName": "Ai-SHA Hub Browser",
-    "asar": true,
     "files": [
-      "src/**/*",
-      "config/**/*",
+      "dist/**/*",
       "assets/**/*",
-      "package.json"
+      "LICENSE*"
     ],
-    "directories": {
-      "output": "dist"
-    },
+    "extraResources": [
+      { "from": "defaults/config.json", "to": "config/defaults.json" }
+    ],
+    "protocols": [
+      { "name": "AiSHA Hub Protocol", "schemes": ["aishahub"] }
+    ],
     "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "icon": "assets/icon.png"
+      "target": ["nsis"],
+      "artifactName": "Ai-SHA.Hub.Browser.Setup.${version}.exe"
     },
     "nsis": {
       "oneClick": true,
-      "allowElevation": true,
+      "perMachine": false,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "deleteAppDataOnUninstall": true,
-      "runAfterFinish": true,
-      "uninstallDisplayName": "Ai-SHA Hub Browser",
-      "artifactName": "Ai-SHA.Hub.Browser.Setup.${version}.${ext}"
-    },
-    "portable": {
-      "artifactName": "AiSHA-Hub-Browser-${version}-Portable.${ext}"
+      "createStartMenuShortcut": true
     },
     "publish": [
-      {
-        "provider": "github",
-        "owner": "andreibyf",
-        "repo": "aisha-hub-browser",
-        "vPrefixedTagName": true
-      }
+      { "provider": "github", "owner": "andreibyf", "repo": "aisha-hub-browser" }
     ]
-  },
-  "dependencies": {
-    "electron-log": "^5.2.0",
-    "electron-updater": "^6.3.9",
-    "openai": "^5.21.0"
-  },
-  "devDependencies": {
-    "electron": "^38.1.1",
-    "electron-builder": "^24.13.3"
   }
 }

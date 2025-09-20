@@ -1,0 +1,5 @@
+{
+  "baseUrl": "https://hub.aishacrm.app",
+  "agui": { "enabled": true, "streamUrl": "http://localhost:3030/ag-ui/stream" }
+}
+

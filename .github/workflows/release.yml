@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build/publish (e.g., v1.5.5)'
+        description: 'Tag to build/publish (e.g., v2.2.0)'
         required: false
 
 jobs:
@@ -20,6 +20,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +29,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Install dependencies (lockfile-aware)
         shell: pwsh
@@ -38,6 +40,13 @@ jobs:
             npm install --package-lock-only --no-audit --no-fund
             npm ci
           }
+
+      # If you add TypeScript later, keep this. If not, it no-ops safely if "build" is missing.
+      - name: Build (TS -> JS, if applicable)
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.scripts.build) { npm run build }
 
       - name: Prepare code-signing cert (optional)
         shell: pwsh
@@ -98,14 +107,13 @@ jobs:
             Get-ChildItem $dist -Recurse -File | ForEach-Object { Write-Host $_.FullName }
             Write-Error "No .exe files found anywhere under dist/"
           }
-          $out = ""
-          foreach ($f in $files) {
+          $lines = foreach ($f in $files) {
             $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
-            $rel  = Resolve-Path -Relative $f.FullName
-            $out += "$rel  $hash`n"
+            "$((Resolve-Path -Relative $f.FullName))  $hash"
           }
-          $out | Out-File -FilePath "$dist\checksums.txt" -Encoding utf8
-          Get-Content "$dist\checksums.txt"
+          $outFile = Join-Path $dist "checksums.txt"
+          $lines -join "`n" | Out-File -FilePath $outFile -Encoding utf8
+          Get-Content $outFile
 
       - name: Generate release notes from template
         shell: pwsh
@@ -122,62 +130,17 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = core.getInput('tag') || (process.env.GITHUB_REF_NAME || '').trim();
+            const tag = `${{ steps.tag.outputs.tag }}`;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            // Which filenames we might re-upload each release
-            const keep = new Set([
-              'latest.yml',
-              // installers are versioned, so they rarely clash, but keep for safety:
-              `AiSHA-Hub-Browser-${require('./package.json').version}-Setup.exe`,
-              `AiSHA-Hub-Browser-${require('./package.json').version}-Portable.exe`,
-              `AiSHA-Hub-Browser-${require('./package.json').version}-Setup.exe.blockmap`,
-            ]);
-
-            // Find the release by tag
+            // Find release by tag
             const rel = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
             const assets = await github.paginate(
               github.rest.repos.listReleaseAssets,
               { owner, repo, release_id: rel.data.id, per_page: 100 }
             );
 
-            // Delete only assets we know we’ll re-upload (especially latest.yml)
+            // Delete only the updater manifest and any Setup/Portable exe blockmaps
             for (const a of assets) {
-              if (a.name === 'latest.yml' || keep.has(a.name)) {
-                core.info(`Deleting existing asset: ${a.name} (${a.id})`);
-                await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: a.id });
-              }
-            }
-
-
-      # --- DEBUG: show everything we built ---
-      - name: Show dist tree (final)
-        shell: bash
-        run: |
-          echo "==== dist (full list) ===="
-          find dist -type f -maxdepth 3 -print
-          echo "==== installers found ===="
-          find dist -type f -name "*Setup*.exe" -print || true
-          echo "==== portables found ===="
-          find dist -type f -name "*Portable*.exe" -print || true
-
-
-
-      # --- Upload everything explicitly ---
-      - name: Upload assets & set release notes
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          body_path: dist/release_body.md
-          files: |
-            dist/*Setup*.exe
-            dist/*Portable*.exe
-            dist/**/*.blockmap
-          overwrite_files: true
-          fail_on_unmatched_files: false
-          draft: false
-          prerelease: false
-
-
-
+              if (a.

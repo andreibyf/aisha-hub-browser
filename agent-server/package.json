@@ -1,0 +1,19 @@
+{
+  "name": "agui-test-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch server-ws.ts",
+    "start": "node --env-file=.env server-ws.js",
+    "build": "tsc && cp server-ws.ts server-ws.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

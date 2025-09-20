@@ -203,13 +203,40 @@ async function executeToolCalls(win, calls) {
     if (c.name === 'dom_click') {
       const sel = c.args?.selector;
       if (!sel) continue;
+
       const r = await execInPage(win, `
-      const el = document.querySelector(${JSON.stringify(sel)});
-      if (!el) throw new Error("Element not found: ${sel}");
-      el.click(); true;
+      (function() {
+        const sel = ${JSON.stringify(sel)};
+        let el = document.querySelector(sel);
+        if (!el) throw new Error("Element not found: " + sel);
+
+        try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch {}
+
+        const fire = (type) => {
+          const evt = new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            button: 0,
+            buttons: 1,
+            clientX: (el.getBoundingClientRect().left + 5),
+                                     clientY: (el.getBoundingClientRect().top + 5)
+          });
+          el.dispatchEvent(evt);
+        };
+
+        // full pointer/mouse sequence – many frameworks listen for these
+        try { el.focus({ preventScroll: true }); } catch {}
+        fire('pointerdown'); fire('mousedown'); fire('pointerup'); fire('mouseup');
+        // .click() as a fallback (after real events)
+        if (typeof el.click === 'function') el.click();
+
+        return true;
+      })()
       `);
+
       if (!r.ok) throw new Error(r.error);
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 300));
       continue;
     }
 

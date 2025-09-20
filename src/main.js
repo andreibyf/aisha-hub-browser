@@ -245,6 +245,72 @@ function destroyAllWindows() {
   });
 }
 
+// ---- In-page overlay prompt (no window.prompt) ----
+async function uiPrompt(win, message = "What should I do?", placeholder = "Create a new lead for Acme") {
+  const js = `
+  (async () => {
+    // Remove any previous prompt
+    const old = document.getElementById('__aisha_overlay');
+    if (old) old.remove();
+
+    const wrap = document.createElement('div');
+    wrap.id = '__aisha_overlay';
+    wrap.style.position = 'fixed';
+    wrap.style.inset = '0';
+    wrap.style.background = 'rgba(0,0,0,.45)';
+    wrap.style.zIndex = '2147483647';
+    wrap.style.display = 'flex';
+    wrap.style.alignItems = 'center';
+    wrap.style.justifyContent = 'center';
+
+    const box = document.createElement('div');
+    box.style.background = '#111';
+    box.style.color = '#fff';
+    box.style.padding = '16px';
+    box.style.borderRadius = '10px';
+    box.style.minWidth = '380px';
+    box.style.fontFamily = 'system-ui, Segoe UI, Arial, sans-serif';
+    box.style.boxShadow = '0 10px 30px rgba(0,0,0,.35)';
+    box.innerHTML = \`
+    <div style="font-weight:600;margin-bottom:8px">\${${JSON.stringify(message)}}</div>
+    <input id="__aisha_cmd_inp" style="width:100%;padding:10px;background:#222;color:#fff;border:1px solid #333;border-radius:8px" placeholder="\${${JSON.stringify(placeholder)}}" />
+    <div style="margin-top:12px;text-align:right;gap:8px;display:flex;justify-content:flex-end">
+    <button id="__aisha_cancel" style="background:#333;color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer">Cancel</button>
+    <button id="__aisha_ok" style="background:#4f8cff;color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer">OK</button>
+    </div>\`;
+
+    wrap.appendChild(box);
+    document.body.appendChild(wrap);
+
+    const inp = box.querySelector('#__aisha_cmd_inp');
+    const okBtn = box.querySelector('#__aisha_ok');
+    const cancelBtn = box.querySelector('#__aisha_cancel');
+
+    return await new Promise((resolve) => {
+      const done = (val) => { wrap.remove(); resolve(val ?? ''); };
+
+      okBtn.addEventListener('click', () => done(inp.value.trim()));
+      cancelBtn.addEventListener('click', () => done(''));
+
+      wrap.addEventListener('click', (e) => {
+        if (e.target === wrap) done('');
+      });
+
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') done(inp.value.trim());
+          if (e.key === 'Escape') done('');
+        });
+
+          setTimeout(() => inp.focus(), 0);
+    });
+  })()
+  `;
+  const res = await execInPage(win, js);
+  if (!res.ok) throw new Error(res.error || 'Prompt failed');
+  return res.result || '';
+}
+
+
 // ---------------- Create window ----------------
 async function createWindow() {
   const allow = getAllowlist();
@@ -308,28 +374,12 @@ async function createWindow() {
             try {
               const focused = BrowserWindow.getFocusedWindow() || win;
               // Prompt shim (some SPAs disable window.prompt)
-              const pr = await execInPage(focused, `
-              let msg = "What should I do? (e.g. \\'Create a new lead for Acme\\')";
-              let val = (window.prompt && typeof window.prompt === 'function')
-              ? window.prompt(msg)
-              : await (async () => {
-                const d = document.createElement('div');
-                d.innerHTML = '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0006;z-index:9999999;"><div style="background:#111;color:#fff;padding:16px;border-radius:8px;min-width:360px;font-family:sans-serif;"><div style="margin-bottom:8px">AI Command</div><input id="__aisha_cmd" style="width:100%;padding:8px;background:#222;color:#fff;border:1px solid #333;border-radius:6px" placeholder="Create a new lead for Acme" /><div style="margin-top:10px;text-align:right"><button id="__aisha_ok">OK</button> <button id="__aisha_cancel">Cancel</button></div></div></div>';
-                document.body.appendChild(d);
-                return new Promise(res => {
-                  const ok = d.querySelector('#__aisha_ok');
-                  const inp = d.querySelector('#__aisha_cmd');
-                  const cancel = d.querySelector('#__aisha_cancel');
-                  ok.onclick = () => { const v = inp.value; d.remove(); res(v||''); };
-                  cancel.onclick = () => { d.remove(); res(''); };
-                  setTimeout(()=>inp.focus(),0);
-                });
-              })();
-              return val || '';
-              `);
-              if (!pr.ok) throw new Error('Prompt failed: ' + pr.error);
-              const goal = (pr.result || '').trim();
-              if (!goal) return;
+              const goal = await uiPrompt(
+                focused,
+                "What should I do? (e.g. “Create a new lead for Acme”)",
+                                          "Create a new lead for Acme"
+              );
+              if (!goal) return; // user cancelled
 
               const token = await getAiToken();
               const snapshot = await getSnapshot(focused);

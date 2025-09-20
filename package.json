@@ -1,6 +1,6 @@
 {
   "name": "aisha-hub-browser",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Ai-SHA Hub Browser – Desktop access to Ai-SHA CRM (hub-only)",
   "author": "Ai-SHA",
   "main": "src/main.js",
@@ -34,7 +34,9 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "AiSHA-Hub-Browser-${version}-Setup.${ext}"
+      "deleteAppDataOnUninstall": true,
+      "runAfterFinish": true,
+      "uninstallDisplayName": "Ai-SHA Hub Browser"
     },
     "portable": {
       "artifactName": "AiSHA-Hub-Browser-${version}-Portable.${ext}"

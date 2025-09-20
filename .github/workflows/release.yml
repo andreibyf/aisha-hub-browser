@@ -167,17 +167,16 @@ jobs:
         shell: pwsh
         run: |
           $setup = Get-ChildItem dist -Recurse -Include *Setup*.exe -File | Select-Object -First 1
-          if ($setup) {
-            $zip = Join-Path $setup.DirectoryName ($setup.BaseName + ".zip")
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            [System.IO.Compression.ZipFile]::CreateFromDirectory($setup.DirectoryName, $zip + ".tmp")
-            # Keep only the installer inside the zip
-            # Rebuild zip containing only the EXE:
-            Remove-Item $zip -ErrorAction SilentlyContinue
-            $zipArchive = [System.IO.Compression.ZipFile]::Open($zip, 'Create')
-            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive, $setup.FullName, $setup.Name) | Out-Null
-            $zipArchive.Dispose()
-            Write-Host "Zipped installer: $zip"
+          if (-not $setup) { Write-Host "No Setup EXE to zip."; exit 0 }
+
+          $zip = Join-Path $setup.DirectoryName ($setup.BaseName + ".zip")
+          if (Test-Path $zip) { Remove-Item -Force $zip }
+
+          # zip just the EXE (not a directory)
+          Compress-Archive -Path $setup.FullName -DestinationPath $zip -Force
+
+          Write-Host "Zipped installer -> $zip"
+
           } else {
             Write-Host "No Setup EXE to zip."
           }

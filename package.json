@@ -36,7 +36,8 @@
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": true,
       "runAfterFinish": true,
-      "uninstallDisplayName": "Ai-SHA Hub Browser"
+      "uninstallDisplayName": "Ai-SHA Hub Browser",
+      "artifactName": "Ai-SHA.Hub.Browser.Setup.${version}.${ext}"
     },
     "portable": {
       "artifactName": "AiSHA-Hub-Browser-${version}-Portable.${ext}"

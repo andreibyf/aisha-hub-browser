@@ -166,20 +166,24 @@ jobs:
       - name: Zip NSIS installer (optional)
         shell: pwsh
         run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
           $setup = Get-ChildItem dist -Recurse -Include *Setup*.exe -File | Select-Object -First 1
           if (-not $setup) { Write-Host "No Setup EXE to zip."; exit 0 }
 
           $zip = Join-Path $setup.DirectoryName ($setup.BaseName + ".zip")
           if (Test-Path $zip) { Remove-Item -Force $zip }
 
-          # zip just the EXE (not a directory)
-          Compress-Archive -Path $setup.FullName -DestinationPath $zip -Force
+          $archive = [System.IO.Compression.ZipFile]::Open($zip, [System.IO.Compression.ZipArchiveMode]::Create)
+          try {
+            $entryName = $setup.Name  # file name inside the zip
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $setup.FullName, $entryName)
+          } finally {
+            $archive.Dispose()
+          }
 
           Write-Host "Zipped installer -> $zip"
 
-          } else {
-            Write-Host "No Setup EXE to zip."
-          }
 
       # --- Upload everything explicitly ---
       - name: Upload assets & set release notes

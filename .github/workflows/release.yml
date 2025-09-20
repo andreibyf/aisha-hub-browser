@@ -174,8 +174,6 @@ jobs:
             dist/*Setup*.exe
             dist/*Portable*.exe
             dist/**/*.blockmap
-            dist/**/latest.yml
-            dist/*Setup*.zip
           overwrite_files: true
           fail_on_unmatched_files: false
           draft: false
